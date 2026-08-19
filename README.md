@@ -52,7 +52,7 @@ FastAPI REST API ─────────────── PostgreSQL / SQLi
        └── KPI, MRP, SPC, cost services
 ```
 
-The browser application also contains a deterministic offline demonstration dataset so a portfolio preview remains navigable. The Docker application uses FastAPI and the seeded database as the source of record. See [Architecture](docs/ARCHITECTURE.md), [Optimization](docs/OPTIMIZATION.md), and [Simulation](docs/SIMULATION.md).
+The browser application also contains a deterministic offline demonstration dataset so a portfolio preview remains navigable. In Docker, the command-center KPIs and trends, all 420 orders, authenticated order writes, CP-SAT Gantt results, and Scenario Lab comparisons are loaded from FastAPI/PostgreSQL. See [Architecture](docs/ARCHITECTURE.md), [Optimization](docs/OPTIMIZATION.md), and [Simulation](docs/SIMULATION.md).
 
 ## Algorithms
 
@@ -112,6 +112,9 @@ npm run lint
 npm run typecheck
 npm test
 npx playwright test
+
+# Full browser/API/PostgreSQL integration (Docker Compose must be running)
+PLANTPILOT_API_INTEGRATION=1 npx playwright test
 
 # Production configuration
 docker compose config

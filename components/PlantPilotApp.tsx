@@ -1,6 +1,12 @@
 "use client";
 
-import { FormEvent, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  FormEvent,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   Activity,
   AlertTriangle,
@@ -68,6 +74,20 @@ import {
   seedSchedule,
   type Order,
 } from "@/lib/factory-data";
+import {
+  createOrder as createApiOrder,
+  getDashboard,
+  getOrders,
+  login as apiLogin,
+  runScenario as runApiScenario,
+  runSchedule as runApiSchedule,
+  updateOrder as updateApiOrder,
+  type ApiDashboard,
+  type ApiOrder,
+  type ApiScenarioResult,
+  type ApiState,
+  type ScheduleResult,
+} from "@/lib/api";
 
 type View =
   | "command"
@@ -85,6 +105,26 @@ type View =
   | "reports"
   | "settings";
 type ScenarioResult = typeof defaultScenario;
+
+function mapApiOrder(order: ApiOrder): Order {
+  const product = products.find((item) => item[0] === order.sku);
+  return {
+    ...order,
+    margin: product ? Number(product[3]) - Number(product[4]) : 0,
+  };
+}
+
+function mapScenarioMetrics(metrics: ApiScenarioResult["baseline"]) {
+  return {
+    otd: metrics.on_time_delivery,
+    cost: metrics.total_cost,
+    overtime: metrics.overtime_hours,
+    throughput: metrics.throughput,
+    utilization: metrics.utilization,
+    lateness: metrics.average_lateness_hours,
+    wip: metrics.wip,
+  };
+}
 
 const navGroups: {
   label: string;
@@ -286,17 +326,64 @@ function PanelHead({
   );
 }
 
-function DataSourceNote() {
+function DataSourceNote({ apiState = "demo" }: { apiState?: ApiState }) {
   return (
     <p className="data-note">
       <ShieldCheck size={13} /> Values are calculated from PlantPilot&apos;s
-      deterministic synthetic factory dataset.
+      deterministic synthetic factory dataset ·{" "}
+      {apiState === "connected"
+        ? "live FastAPI/PostgreSQL connection"
+        : apiState === "connecting"
+          ? "connecting to the local API"
+          : "portable demo fallback"}
+      .
     </p>
   );
 }
 
-function CommandCenter({ navigate }: { navigate: (view: View) => void }) {
-  const kpi = calculateDashboard();
+function CommandCenter({
+  navigate,
+  dashboard,
+  apiState,
+}: {
+  navigate: (view: View) => void;
+  dashboard: ApiDashboard | null;
+  apiState: ApiState;
+}) {
+  const fallback = calculateDashboard();
+  const kpi = dashboard
+    ? {
+        ...fallback,
+        oee: dashboard.kpis.oee,
+        availability: dashboard.kpis.availability,
+        performance: dashboard.kpis.performance,
+        quality: dashboard.kpis.quality_rate,
+        throughput: dashboard.kpis.throughput,
+        otd: dashboard.kpis.on_time_delivery,
+        adherence: dashboard.kpis.schedule_adherence,
+        utilization: dashboard.kpis.capacity_utilization,
+        wip: dashboard.kpis.wip,
+        scrapRate: dashboard.kpis.scrap_rate,
+        rework: dashboard.kpis.rework,
+        leadTime: dashboard.kpis.average_lead_time_days,
+        downtime: dashboard.kpis.machine_downtime_hours,
+        overtime: dashboard.kpis.overtime_hours,
+        inventoryValue: dashboard.kpis.inventory_value,
+        stockoutRisk: dashboard.kpis.stockout_risk_count,
+        productionCost: dashboard.kpis.production_cost,
+        costPerUnit: dashboard.kpis.cost_per_unit,
+        energy: dashboard.kpis.energy_kwh,
+      }
+    : fallback;
+  const trend = dashboard
+    ? dashboard.trend.map((row) => ({
+        ...row,
+        date: new Date(row.date).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+        }),
+      }))
+    : dailyKpis;
   const bottlenecks = [...machines]
     .sort((a, b) => b.utilization - a.utilization)
     .slice(0, 4);
@@ -362,7 +449,7 @@ function CommandCenter({ navigate }: { navigate: (view: View) => void }) {
           <div className="chart-large">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
-                data={dailyKpis}
+                data={trend}
                 margin={{ top: 18, right: 12, left: -22, bottom: 0 }}
               >
                 <defs>
@@ -574,7 +661,7 @@ function CommandCenter({ navigate }: { navigate: (view: View) => void }) {
           </div>
         </Panel>
       </section>
-      <DataSourceNote />
+      <DataSourceNote apiState={apiState} />
     </>
   );
 }
@@ -583,10 +670,12 @@ function OrdersView({
   orders,
   setOrders,
   openCreate,
+  onStatusUpdate,
 }: {
   orders: Order[];
   setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
   openCreate: () => void;
+  onStatusUpdate: (id: number, status: string) => Promise<Order | null>;
 }) {
   const [query, setQuery] = useState("");
   const [priority, setPriority] = useState("All");
@@ -598,7 +687,7 @@ function OrdersView({
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
-  const update = (id: number, status: string) =>
+  const update = async (id: number, status: string) => {
     setOrders((current) =>
       current.map((order) =>
         order.id === id
@@ -613,6 +702,14 @@ function OrdersView({
           : order,
       ),
     );
+    const persisted = await onStatusUpdate(id, status);
+    if (persisted) {
+      setOrders((current) =>
+        current.map((order) => (order.id === id ? persisted : order)),
+      );
+      setSelected(persisted);
+    }
+  };
   return (
     <>
       <div className="view-toolbar">
@@ -833,7 +930,7 @@ function OrdersView({
             <button
               className="primary full"
               onClick={() => {
-                update(selected.id, "Released");
+                void update(selected.id, "Released");
                 setSelected({ ...selected, status: "Released" });
               }}
             >
@@ -846,20 +943,55 @@ function OrdersView({
   );
 }
 
-function ScheduleView() {
+function ScheduleView({
+  token,
+  notify,
+}: {
+  token: string;
+  notify: (message: string) => void;
+}) {
   const [running, setRunning] = useState(false);
   const [ran, setRan] = useState(false);
+  const [schedule, setSchedule] = useState<ScheduleResult | null>(null);
   const [zoom, setZoom] = useState(1);
   const [machine, setMachine] = useState("All");
+  const scheduleRows = schedule
+    ? schedule.assignments.map((assignment) => ({
+        id: `${assignment.order_id}-${assignment.operation_index}-${assignment.machine_code}`,
+        order: assignment.order_code,
+        product: assignment.product,
+        priority: assignment.priority,
+        operation: assignment.operation,
+        machine: assignment.machine_code,
+        start: assignment.start_minute,
+        end: assignment.end_minute,
+        setup: assignment.setup_minutes,
+      }))
+    : seedSchedule;
   const rows = (
     machine === "All"
-      ? seedSchedule
-      : seedSchedule.filter((row) => row.machine === machine)
+      ? scheduleRows
+      : scheduleRows.filter((row) => row.machine === machine)
   ).slice(0, 50);
   const machineList = [...new Set(rows.map((row) => row.machine))];
-  const run = () => {
+  const run = async () => {
     setRunning(true);
-    setTimeout(() => {
+    if (token) {
+      try {
+        const result = await runApiSchedule(token);
+        setSchedule(result);
+        setRan(true);
+        notify(
+          `${result.solver}: ${result.status} · ${result.operations_scheduled} operations`,
+        );
+        return;
+      } catch {
+        notify("API unavailable; showing the deterministic validated schedule");
+      } finally {
+        setRunning(false);
+      }
+    }
+    window.setTimeout(() => {
       setRunning(false);
       setRan(true);
     }, 900);
@@ -895,23 +1027,37 @@ function ScheduleView() {
       <section className="summary-strip">
         <div>
           <span>Solver status</span>
-          <b className="green-text">{ran ? "OPTIMAL" : "FEASIBLE"}</b>
+          <b className="green-text">
+            {schedule?.status || (ran ? "OPTIMAL" : "FEASIBLE")}
+          </b>
         </div>
         <div>
           <span>Orders scheduled</span>
-          <b>28</b>
+          <b>{schedule?.orders_scheduled || 28}</b>
         </div>
         <div>
           <span>Operations</span>
-          <b>{seedSchedule.length}</b>
+          <b>{schedule?.operations_scheduled || seedSchedule.length}</b>
         </div>
         <div>
           <span>Makespan</span>
-          <b>{ran ? "5d 18h" : "6d 04h"}</b>
+          <b>
+            {schedule
+              ? `${Math.floor(schedule.makespan_minutes / 1440)}d ${Math.round((schedule.makespan_minutes % 1440) / 60)}h`
+              : ran
+                ? "5d 18h"
+                : "6d 04h"}
+          </b>
         </div>
         <div>
           <span>Weighted tardiness</span>
-          <b>{ran ? "42 min" : "184 min"}</b>
+          <b>
+            {schedule
+              ? `${fmt(schedule.weighted_tardiness_minutes)} min`
+              : ran
+                ? "42 min"
+                : "184 min"}
+          </b>
         </div>
       </section>
       <Panel className="gantt-panel">
@@ -2073,48 +2219,86 @@ function CostView() {
   );
 }
 
-function ScenarioLab({ onComplete }: { onComplete: () => void }) {
+function ScenarioLab({
+  onComplete,
+  token,
+}: {
+  onComplete: () => void;
+  token: string;
+}) {
   const [event, setEvent] = useState("Machine disruption");
   const [resource, setResource] = useState("CNC-04");
   const [magnitude, setMagnitude] = useState(100);
   const [duration, setDuration] = useState(12);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ScenarioResult | null>(null);
-  const run = () => {
+  const [recommendedActions, setRecommendedActions] = useState<string[]>([]);
+  const runFallback = () => {
+    const severity =
+      Math.max(0.25, Math.min(1.6, magnitude / 100)) *
+      Math.max(0.4, duration / 12);
+    const disrupted = {
+      ...defaultScenario.disrupted,
+      otd: Number((defaultScenario.baseline.otd - 5.1 * severity).toFixed(1)),
+      cost: Math.round(defaultScenario.baseline.cost + 42000 * severity),
+      overtime: Math.round(defaultScenario.baseline.overtime + 25 * severity),
+      throughput: Math.round(
+        defaultScenario.baseline.throughput - 280 * severity,
+      ),
+      utilization: Number(
+        (defaultScenario.baseline.utilization - 5.2 * severity).toFixed(1),
+      ),
+      lateness: Number(
+        (defaultScenario.baseline.lateness + 5.5 * severity).toFixed(1),
+      ),
+      wip: Math.round(defaultScenario.baseline.wip + 112 * severity),
+    };
+    const recommended = {
+      ...defaultScenario.recommended,
+      otd: Number(Math.min(97.2, disrupted.otd + 7.4).toFixed(1)),
+      cost: Math.round(disrupted.cost - 28000 * severity),
+      overtime: Math.max(0, Math.round(disrupted.overtime - 17 * severity)),
+      throughput: Math.round(disrupted.throughput + 315 * severity),
+      utilization: Number(Math.min(94, disrupted.utilization + 9.6).toFixed(1)),
+      lateness: Number(Math.max(0.6, disrupted.lateness - 6.1).toFixed(1)),
+      wip: Math.max(0, Math.round(disrupted.wip - 128)),
+    };
+    setResult({ baseline: defaultScenario.baseline, disrupted, recommended });
+    setRecommendedActions([
+      "Move eligible work to alternate qualified machines",
+      "Protect critical orders with targeted overtime",
+      "Advance the affected resource inspection window",
+    ]);
+  };
+  const run = async () => {
     setRunning(true);
-    setTimeout(() => {
-      const severity =
-        Math.max(0.25, Math.min(1.6, magnitude / 100)) *
-        Math.max(0.4, duration / 12);
-      const disrupted = {
-        ...defaultScenario.disrupted,
-        otd: Number((defaultScenario.baseline.otd - 5.1 * severity).toFixed(1)),
-        cost: Math.round(defaultScenario.baseline.cost + 42000 * severity),
-        overtime: Math.round(defaultScenario.baseline.overtime + 25 * severity),
-        throughput: Math.round(
-          defaultScenario.baseline.throughput - 280 * severity,
-        ),
-        utilization: Number(
-          (defaultScenario.baseline.utilization - 5.2 * severity).toFixed(1),
-        ),
-        lateness: Number(
-          (defaultScenario.baseline.lateness + 5.5 * severity).toFixed(1),
-        ),
-        wip: Math.round(defaultScenario.baseline.wip + 112 * severity),
-      };
-      const recommended = {
-        ...defaultScenario.recommended,
-        otd: Number(Math.min(97.2, disrupted.otd + 7.4).toFixed(1)),
-        cost: Math.round(disrupted.cost - 28000 * severity),
-        overtime: Math.max(0, Math.round(disrupted.overtime - 17 * severity)),
-        throughput: Math.round(disrupted.throughput + 315 * severity),
-        utilization: Number(
-          Math.min(94, disrupted.utilization + 9.6).toFixed(1),
-        ),
-        lateness: Number(Math.max(0.6, disrupted.lateness - 6.1).toFixed(1)),
-        wip: Math.max(0, Math.round(disrupted.wip - 128)),
-      };
-      setResult({ baseline: defaultScenario.baseline, disrupted, recommended });
+    if (token) {
+      try {
+        const response = await runApiScenario(token, {
+          name: `${event} · ${resource}`,
+          event_type: event,
+          resource_code: resource,
+          magnitude,
+          duration_hours: duration,
+        });
+        setResult({
+          baseline: mapScenarioMetrics(response.baseline),
+          disrupted: mapScenarioMetrics(response.disrupted),
+          recommended: mapScenarioMetrics(response.recommended),
+        });
+        setRecommendedActions(response.actions);
+        onComplete();
+        return;
+      } catch {
+        runFallback();
+        onComplete();
+        return;
+      } finally {
+        setRunning(false);
+      }
+    }
+    window.setTimeout(() => {
+      runFallback();
       setRunning(false);
       onComplete();
     }, 950);
@@ -2331,25 +2515,18 @@ function ScenarioLab({ onComplete }: { onComplete: () => void }) {
                 title="Actions selected by PlantPilot"
               />
               <div className="action-list">
-                {[
-                  "Move eligible turning operations from CNC-04 to CNC-02 and CNC-03",
-                  "Protect Critical orders with 18 hours of targeted Shift B overtime",
-                  "Advance CNC-04 inspection and group the same setup family",
-                  "Permit partial shipment for two Standard orders",
-                ].map((action, i) => (
+                {recommendedActions.map((action, i) => (
                   <div key={action}>
                     <span>{i + 1}</span>
                     <p>
                       <b>{action}</b>
                       <small>
-                        {
-                          [
-                            "Capacity reassignment",
-                            "Labor decision",
-                            "Maintenance + setup",
-                            "Delivery policy",
-                          ][i]
-                        }
+                        {[
+                          "Capacity response",
+                          "Labor decision",
+                          "Maintenance response",
+                          "Delivery policy",
+                        ][i] || "Model-selected intervention"}
                       </small>
                     </p>
                     <Check size={16} />
@@ -2364,17 +2541,16 @@ function ScenarioLab({ onComplete }: { onComplete: () => void }) {
               />
               <div className="impact-list">
                 <div>
-                  <span>Delay penalties avoided</span>
-                  <b>₹0.31 lakh</b>
+                  <span>On-time delivery recovery</span>
+                  <b>{pct(result.recommended.otd - result.disrupted.otd)}</b>
                 </div>
                 <div>
-                  <span>Additional good output</span>
+                  <span>Average lateness reduction</span>
                   <b>
                     {fmt(
-                      result.recommended.throughput -
-                        result.disrupted.throughput,
+                      result.disrupted.lateness - result.recommended.lateness,
                     )}{" "}
-                    units
+                    h
                   </b>
                 </div>
                 <div>
@@ -2785,22 +2961,23 @@ function SettingsView({ reset }: { reset: () => void }) {
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: () => void }) {
+function LoginScreen({
+  onLogin,
+}: {
+  onLogin: (email: string, password: string) => Promise<string | null>;
+}) {
   const [email, setEmail] = useState("admin@plantpilot.local");
   const [password, setPassword] = useState("PlantPilot@2026");
   const [error, setError] = useState("");
-  const submit = (e: FormEvent) => {
+  const [submitting, setSubmitting] = useState(false);
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (
-      email.toLowerCase() === "admin@plantpilot.local" &&
-      password === "PlantPilot@2026"
-    ) {
+    setSubmitting(true);
+    const message = await onLogin(email, password);
+    setSubmitting(false);
+    if (!message) {
       setError("");
-      onLogin();
-    } else
-      setError(
-        "Incorrect email or password. Use the demo credentials shown below.",
-      );
+    } else setError(message);
   };
   return (
     <main className="login-page">
@@ -2872,8 +3049,9 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
               {error}
             </div>
           )}
-          <button className="primary full">
-            Sign in <ArrowRight size={15} />
+          <button className="primary full" disabled={submitting}>
+            {submitting ? "Authenticating…" : "Sign in"}{" "}
+            <ArrowRight size={15} />
           </button>
           <div className="demo-credentials">
             <span>DEMO ACCESS</span>
@@ -2909,6 +3087,7 @@ function CreateOrderModal({
       id: Date.now(),
       order_code: `AM-${2513 + Math.floor(Math.random() * 100)}`,
       customer,
+      product_id: productIndex + 1,
       product: String(product[1]),
       sku: String(product[0]),
       quantity,
@@ -3062,11 +3241,40 @@ export default function PlantPilotApp() {
   const [createOpen, setCreateOpen] = useState(false);
   const [notifications, setNotifications] = useState(3);
   const [toast, setToast] = useState("");
+  const [dashboard, setDashboard] = useState<ApiDashboard | null>(null);
+  const [apiState, setApiState] = useState<ApiState>("connecting");
+  const [token, setToken] = useState("");
   const hydrated = useSyncExternalStore(
     () => () => undefined,
     () => true,
     () => false,
   );
+  useEffect(() => {
+    let active = true;
+    async function connectToFactory() {
+      try {
+        const session = await apiLogin(
+          "admin@plantpilot.local",
+          "PlantPilot@2026",
+        );
+        const [dashboardResponse, orderResponse] = await Promise.all([
+          getDashboard(),
+          getOrders(),
+        ]);
+        if (!active) return;
+        setToken(session.access_token);
+        setDashboard(dashboardResponse);
+        setOrders(orderResponse.items.map(mapApiOrder));
+        setApiState("connected");
+      } catch {
+        if (active) setApiState("demo");
+      }
+    }
+    void connectToFactory();
+    return () => {
+      active = false;
+    };
+  }, []);
   const navigate = (next: View) => {
     setView(next);
     setMobileOpen(false);
@@ -3078,22 +3286,77 @@ export default function PlantPilotApp() {
   };
   const reset = () => {
     setOrders(demoOrders);
+    setDashboard(null);
+    setApiState("demo");
     notify("Demo factory restored to deterministic seed 20260819");
   };
-  if (!loggedIn)
-    return (
-      <LoginScreen
-        onLogin={() => {
-          setView("command");
-          setLoggedIn(true);
-          notify("Welcome to PlantPilot");
-        }}
-      />
-    );
+  const authenticate = async (email: string, password: string) => {
+    try {
+      const session = await apiLogin(email, password);
+      setToken(session.access_token);
+      setLoggedIn(true);
+      setView("command");
+      setApiState("connected");
+      notify("Welcome to PlantPilot");
+      return null;
+    } catch {
+      if (
+        apiState === "demo" &&
+        email.toLowerCase() === "admin@plantpilot.local" &&
+        password === "PlantPilot@2026"
+      ) {
+        setLoggedIn(true);
+        setView("command");
+        notify("Welcome to PlantPilot demo fallback");
+        return null;
+      }
+      return "Incorrect email or password. Use the demo credentials shown below.";
+    }
+  };
+  const persistStatus = async (id: number, status: string) => {
+    if (!token) return null;
+    try {
+      const updated = mapApiOrder(await updateApiOrder(token, id, status));
+      notify(`${updated.order_code} saved to PostgreSQL`);
+      return updated;
+    } catch {
+      notify("Status updated locally; the API could not be reached");
+      return null;
+    }
+  };
+  const createOrder = async (order: Order) => {
+    if (token && order.product_id) {
+      try {
+        const created = mapApiOrder(
+          await createApiOrder(token, {
+            customer: order.customer,
+            product_id: order.product_id,
+            quantity: order.quantity,
+            due_date: order.due_date,
+            priority: order.priority,
+          }),
+        );
+        setOrders((current) => [created, ...current]);
+        notify(`${created.order_code} created`);
+        return;
+      } catch {
+        notify("API unavailable; order retained in the portable demo");
+      }
+    }
+    setOrders((current) => [order, ...current]);
+    notify(`${order.order_code} created`);
+  };
+  if (!loggedIn) return <LoginScreen onLogin={authenticate} />;
   let content: React.ReactNode;
   switch (view) {
     case "command":
-      content = <CommandCenter navigate={navigate} />;
+      content = (
+        <CommandCenter
+          navigate={navigate}
+          dashboard={dashboard}
+          apiState={apiState}
+        />
+      );
       break;
     case "orders":
       content = (
@@ -3101,11 +3364,12 @@ export default function PlantPilotApp() {
           orders={orders}
           setOrders={setOrders}
           openCreate={() => setCreateOpen(true)}
+          onStatusUpdate={persistStatus}
         />
       );
       break;
     case "schedule":
-      content = <ScheduleView />;
+      content = <ScheduleView token={token} notify={notify} />;
       break;
     case "capacity":
       content = <CapacityView />;
@@ -3130,7 +3394,10 @@ export default function PlantPilotApp() {
       break;
     case "scenario":
       content = (
-        <ScenarioLab onComplete={() => notify("Scenario saved to history")} />
+        <ScenarioLab
+          token={token}
+          onComplete={() => notify("Scenario saved to PostgreSQL history")}
+        />
       );
       break;
     case "copilot":
@@ -3146,6 +3413,7 @@ export default function PlantPilotApp() {
     <main
       className={`app-shell ${collapsed ? "collapsed" : ""}`}
       data-hydrated={hydrated}
+      data-api-state={apiState}
     >
       <button
         className="mobile-menu"
@@ -3242,7 +3510,10 @@ export default function PlantPilotApp() {
               <button
                 className="logout"
                 aria-label="Log out"
-                onClick={() => setLoggedIn(false)}
+                onClick={() => {
+                  setToken("");
+                  setLoggedIn(false);
+                }}
               >
                 <LogOut size={14} />
               </button>
@@ -3251,17 +3522,17 @@ export default function PlantPilotApp() {
         </header>
         <div className="content">{content}</div>
         <footer>
-          <span>PlantPilot v1.0 · ApexMotion synthetic factory</span>
-          <span>Asia/Kolkata · INR · Seed 20260819</span>
+          <span>PlantPilot v1.0.1 · ApexMotion synthetic factory</span>
+          <span>
+            Asia/Kolkata · INR · Seed 20260819 ·{" "}
+            {apiState === "connected" ? "API connected" : "demo fallback"}
+          </span>
         </footer>
       </section>
       {createOpen && (
         <CreateOrderModal
           close={() => setCreateOpen(false)}
-          create={(order) => {
-            setOrders((current) => [order, ...current]);
-            notify(`${order.order_code} created`);
-          }}
+          create={(order) => void createOrder(order)}
         />
       )}
       {toast && (

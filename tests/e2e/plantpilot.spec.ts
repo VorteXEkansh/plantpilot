@@ -31,3 +31,27 @@ test("order filters, creation, and logout/login validation work", async ({ page 
   await page.getByRole("button", { name: /Sign in/ }).click();
   await expect(page.getByRole("heading", { name: "Manufacturing command center" })).toBeVisible();
 });
+
+test("local full stack loads PostgreSQL data and renders a CP-SAT result", async ({ page }) => {
+  test.skip(
+    process.env.PLANTPILOT_API_INTEGRATION !== "1",
+    "Run with PLANTPILOT_API_INTEGRATION=1 against Docker Compose",
+  );
+  await page.goto("/");
+  await expect(page.locator('[data-api-state="connected"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByText("live FastAPI/PostgreSQL connection")).toBeVisible();
+  await page.getByRole("button", { name: "Production schedule", exact: true }).click();
+  await page.getByRole("button", { name: /Run CP-SAT scheduler/ }).click();
+  await expect(page.getByText(/OR-Tools CP-SAT: (FEASIBLE|OPTIMAL)/)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByText("134", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Scenario Lab LAB", exact: true }).click();
+  await page.getByRole("button", { name: /Run simulation/ }).click();
+  await expect(page.getByText("Recommended plan found")).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByText("₹22.87 lakh", { exact: true })).toBeVisible();
+});
