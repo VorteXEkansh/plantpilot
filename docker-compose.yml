@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: plantpilot
+      POSTGRES_USER: plantpilot
+      POSTGRES_PASSWORD: plantpilot
+    volumes:
+      - plantpilot-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plantpilot -d plantpilot"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+    restart: unless-stopped
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgresql+psycopg://plantpilot:plantpilot@db:5432/plantpilot
+      SECRET_KEY: ${SECRET_KEY:-plantpilot-demo-local-secret-change-me}
+      CORS_ORIGINS: http://localhost:3000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SYNTHETIC_SEED: 20260819
+    ports: ["8000:8000"]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports: ["3000:3000"]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  plantpilot-db:

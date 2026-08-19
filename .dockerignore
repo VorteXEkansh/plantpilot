@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+node_modules
+dist
+.vinext
+.wrangler
+**/__pycache__
+**/*.db
+.env
+screenshots
