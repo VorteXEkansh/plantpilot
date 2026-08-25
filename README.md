@@ -14,8 +14,9 @@ PlantPilot is a production-shaped digital manufacturing platform combining finit
 - Render API: <https://plantpilot-api.onrender.com>
 - API health: <https://plantpilot-api.onrender.com/health>
 - OpenAPI docs: <https://plantpilot-api.onrender.com/docs>
+- GitHub repository: <https://github.com/VorteXEkansh/plantpilot>
 
-The existing Sites deployment is owner-only. Its production browser bundle uses the Render API above; Render connects privately to `plantpilot-db` PostgreSQL in Singapore. The hosted path is independent of the developer laptop. Free Render services can cold-start, and the free PostgreSQL instance expires on **2026-09-24** unless upgraded or replaced.
+The existing Sites deployment is public and can be opened without a ChatGPT sign-in. Its production browser bundle uses the Render API above; Render connects privately to `plantpilot-db` PostgreSQL in Singapore. The hosted path is independent of the developer laptop. Free Render services can cold-start, and the free PostgreSQL instance expires on **2026-09-24** unless upgraded or replaced.
 
 ## The factory
 

@@ -10,7 +10,7 @@
 | OpenAPI | `https://plantpilot-api.onrender.com/docs` |
 | GitHub source | `https://github.com/VorteXEkansh/plantpilot` (`main`) |
 
-The current Sites access policy is owner-only. The production topology is:
+The current Sites access policy is public, so the frontend opens without a ChatGPT sign-in. The production topology is:
 
 ```text
 Sites frontend
