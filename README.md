@@ -61,7 +61,7 @@ FastAPI REST API ─────────────── PostgreSQL / SQLi
        └── KPI, MRP, SPC, cost services
 ```
 
-The browser application also contains a deterministic offline demonstration dataset so a portfolio preview remains navigable. In Docker, the command-center KPIs and trends, all 420 orders, authenticated order writes, CP-SAT Gantt results, and Scenario Lab comparisons are loaded from FastAPI/PostgreSQL. See [Architecture](docs/ARCHITECTURE.md), [Optimization](docs/OPTIMIZATION.md), and [Simulation](docs/SIMULATION.md).
+The browser application also contains a deterministic offline demonstration dataset so a portfolio preview remains navigable. In connected production, the command-center KPIs and trends, all 420 orders, inventory/MRP, maintenance intelligence, quality/SPC, authenticated order writes, CP-SAT Gantt results, and Scenario Lab comparisons are loaded from FastAPI/PostgreSQL. See [Architecture](docs/ARCHITECTURE.md), [Optimization](docs/OPTIMIZATION.md), and [Simulation](docs/SIMULATION.md).
 
 ## Algorithms
 

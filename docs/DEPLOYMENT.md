@@ -39,7 +39,7 @@ The public API verification on 2026-08-25 passed:
 - `/health`: HTTP 200, `status=healthy`, `database=connected`;
 - `/docs`: HTTP 200;
 - valid login: HTTP 200; invalid and anonymous protected requests: HTTP 401;
-- dashboard, orders, inventory/MRP, maintenance, quality, and executive report endpoints: HTTP 200;
+- dashboard, orders, inventory/MRP, maintenance, quality, and executive report endpoints: HTTP 200; the production frontend renders the inventory, maintenance, and quality responses directly;
 - OR-Tools CP-SAT: `FEASIBLE`, 28 orders and 134 operations scheduled, zero weighted tardiness in the test run;
 - SimPy Scenario Lab: 32 orders evaluated with seed 20260820;
 - CNC-04 12-hour disruption: disrupted OTD 62.5%, recommended OTD 65.6%, average lateness 14.5→12.2 hours, WIP 123→112, modeled cost ₹2,288,893→₹2,282,706;

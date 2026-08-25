@@ -105,6 +105,71 @@ export type ApiScenarioResult = {
   engine: { simulation: string; seed: number; orders_evaluated: number };
 };
 
+export type ApiInventory = {
+  items: Array<{
+    id: number;
+    material_code: string;
+    description: string;
+    category: string;
+    unit: string;
+    unit_cost: number;
+    current_inventory: number;
+    safety_stock: number;
+    reorder_point: number;
+    coverage_days: number;
+    supplier: string;
+    lead_time_days: number;
+    status: string;
+  }>;
+  mrp: Array<{
+    material_code: string;
+    projected_balance: number;
+    purchase_recommendation: number;
+    modeled_purchase_value: number;
+    risk: string;
+  }>;
+};
+
+export type ApiMaintenance = {
+  machines: Array<{
+    machine_code: string;
+    name: string;
+    failure_probability: number;
+    risk_band: string;
+    vibration_mm_s: number;
+    temperature_c: number;
+    runtime_hours: number;
+    maintenance_due: string;
+    mtbf_hours: number;
+    mttr_hours: number;
+    suggested_window: string;
+    drivers: string[];
+  }>;
+  model_card: {
+    model: string;
+    training_data: string;
+    intended_use: string;
+    limitations: string;
+  };
+};
+
+export type ApiQuality = {
+  cp: number;
+  cpk: number;
+  xbar: number;
+  rbar: number;
+  ucl_xbar: number;
+  lcl_xbar: number;
+  rejection_rate: number;
+  pareto: Array<{
+    category: string;
+    count: number;
+    cumulative_percent: number;
+  }>;
+  control_chart: Array<{ sample: number; mean: number; range: number }>;
+  interpretation: string;
+};
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -191,6 +256,18 @@ export function getOrders() {
   return request<{ items: ApiOrder[]; total: number }>(
     "/api/v1/orders?limit=500",
   );
+}
+
+export function getInventory() {
+  return request<ApiInventory>("/api/v1/inventory");
+}
+
+export function getMaintenance() {
+  return request<ApiMaintenance>("/api/v1/maintenance");
+}
+
+export function getQuality() {
+  return request<ApiQuality>("/api/v1/quality");
 }
 
 export function createOrder(

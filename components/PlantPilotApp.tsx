@@ -77,13 +77,19 @@ import {
 import {
   createOrder as createApiOrder,
   getDashboard,
+  getInventory,
+  getMaintenance,
   getOrders,
+  getQuality,
   login as apiLogin,
   runScenario as runApiScenario,
   runSchedule as runApiSchedule,
   updateOrder as updateApiOrder,
   type ApiDashboard,
+  type ApiInventory,
+  type ApiMaintenance,
   type ApiOrder,
+  type ApiQuality,
   type ApiScenarioResult,
   type ApiState,
   type ScheduleResult,
@@ -1566,22 +1572,46 @@ function MachinesView() {
   );
 }
 
-function InventoryView() {
+function InventoryView({ data }: { data: ApiInventory | null }) {
   const [search, setSearch] = useState("");
-  const rows = materials
-    .map((m) => ({
-      ...m,
-      coverage: m.onHand / m.dailyUse,
-      projected: m.onHand - m.dailyUse * 7,
-      recommendation: Math.max(
-        0,
-        Math.ceil((m.reorder + m.dailyUse * m.lead - m.onHand) / 10) * 10,
-      ),
-    }))
+  const inventoryRows = data
+    ? data.items.map((item) => {
+        const mrp = data.mrp.find(
+          (row) => row.material_code === item.material_code,
+        );
+        return {
+          code: item.material_code,
+          description: item.description,
+          category: item.category,
+          unit: item.unit,
+          onHand: item.current_inventory,
+          safety: item.safety_stock,
+          reorder: item.reorder_point,
+          unitCost: item.unit_cost,
+          supplier: item.supplier,
+          lead: item.lead_time_days,
+          coverage: item.coverage_days,
+          projected:
+            mrp?.projected_balance ??
+            item.current_inventory -
+              (item.current_inventory / Math.max(item.coverage_days, 0.1)) * 7,
+          recommendation: mrp?.purchase_recommendation ?? 0,
+        };
+      })
+    : materials.map((m) => ({
+        ...m,
+        coverage: m.onHand / m.dailyUse,
+        projected: m.onHand - m.dailyUse * 7,
+        recommendation: Math.max(
+          0,
+          Math.ceil((m.reorder + m.dailyUse * m.lead - m.onHand) / 10) * 10,
+        ),
+      }));
+  const rows = inventoryRows
     .filter((m) =>
       `${m.code} ${m.description}`.toLowerCase().includes(search.toLowerCase()),
     );
-  const value = materials.reduce((s, m) => s + m.onHand * m.unitCost, 0);
+  const value = inventoryRows.reduce((s, m) => s + m.onHand * m.unitCost, 0);
   const low = rows.filter((m) => m.onHand < m.reorder);
   return (
     <>
@@ -1606,7 +1636,7 @@ function InventoryView() {
           value={formatINR(
             rows.reduce((s, m) => s + m.recommendation * m.unitCost, 0),
           )}
-          delta="7 recommendations"
+          delta={`${rows.filter((m) => m.recommendation > 0).length} recommendations`}
           tone="neutral"
         />
         <MetricCard
@@ -1715,8 +1745,43 @@ function InventoryView() {
   );
 }
 
-function MaintenanceView() {
-  const ranked = [...machines].sort((a, b) => b.risk - a.risk);
+function MaintenanceView({ data }: { data: ApiMaintenance | null }) {
+  const ranked = (data
+    ? data.machines.map((machine) => ({
+        code: machine.machine_code,
+        name: machine.name,
+        risk: machine.failure_probability,
+        vibration: machine.vibration_mm_s,
+        temperature: machine.temperature_c,
+        mtbf: machine.mtbf_hours,
+        mttr: machine.mttr_hours,
+        suggestedWindow: machine.suggested_window,
+        drivers: machine.drivers,
+        maintenanceDue: machine.maintenance_due,
+      }))
+    : machines.map((machine, index) => ({
+        code: machine.code,
+        name: machine.name,
+        risk: machine.risk,
+        vibration: machine.vibration,
+        temperature: machine.temperature,
+        mtbf: Math.round(510 + index * 43),
+        mttr: Number((2.4 + index * 0.3).toFixed(1)),
+        suggestedWindow:
+          machine.risk > 60
+            ? "Within 8 hours"
+            : machine.risk > 20
+              ? "Within 48 hours"
+              : "Next planned PM",
+        drivers:
+          machine.vibration > 5
+            ? ["elevated vibration", "overdue maintenance"]
+            : ["accumulated runtime", "current modeled load"],
+        maintenanceDue: "2026-08-20",
+      }))).sort((a, b) => b.risk - a.risk);
+  const averageMtbf = ranked.reduce((sum, row) => sum + row.mtbf, 0) / ranked.length;
+  const averageMttr = ranked.reduce((sum, row) => sum + row.mttr, 0) / ranked.length;
+  const overdue = ranked.filter((row) => row.maintenanceDue < "2026-08-19").length;
   const riskChart = ranked.map((m) => ({
     name: m.code,
     risk: m.risk,
@@ -1728,20 +1793,20 @@ function MaintenanceView() {
         <MetricCard
           code="MTBF"
           label="Mean time between failures"
-          value="684 h"
-          delta="▲ 6.8%"
+          value={`${Math.round(averageMtbf)} h`}
+          delta="Cloud fleet average"
         />
         <MetricCard
           code="MTTR"
           label="Mean time to repair"
-          value="3.7 h"
-          delta="▼ 0.4 h"
+          value={`${averageMttr.toFixed(1)} h`}
+          delta="Cloud fleet average"
         />
         <MetricCard
           code="PM"
           label="Preventive maintenance compliance"
-          value="91.3%"
-          delta="2 overdue"
+          value={`${(((ranked.length - overdue) / ranked.length) * 100).toFixed(1)}%`}
+          delta={`${overdue} overdue`}
           tone="negative"
         />
         <MetricCard
@@ -1839,7 +1904,7 @@ function MaintenanceView() {
               </tr>
             </thead>
             <tbody>
-              {ranked.slice(0, 10).map((m, i) => (
+            {ranked.slice(0, 10).map((m) => (
                 <tr key={m.code}>
                   <td>
                     <b>{m.code}</b>
@@ -1851,20 +1916,10 @@ function MaintenanceView() {
                   <td>
                     <b className={m.risk > 40 ? "coral-text" : ""}>{m.risk}%</b>
                   </td>
-                  <td>{Math.round(510 + i * 43)} h</td>
-                  <td>{(2.4 + i * 0.3).toFixed(1)} h</td>
-                  <td>
-                    {m.risk > 60
-                      ? "Within 8 hours"
-                      : m.risk > 20
-                        ? "Within 48 hours"
-                        : "Next planned PM"}
-                  </td>
-                  <td>
-                    {m.vibration > 5
-                      ? "Vibration · overdue PM"
-                      : "Runtime · modeled load"}
-                  </td>
+                  <td>{Math.round(m.mtbf)} h</td>
+                  <td>{m.mttr.toFixed(1)} h</td>
+                  <td>{m.suggestedWindow}</td>
+                  <td>{m.drivers.join(" · ")}</td>
                   <td>
                     <button className="table-link">Plan</button>
                   </td>
@@ -1890,15 +1945,15 @@ function MaintenanceView() {
   );
 }
 
-function QualityView() {
-  const samples = Array.from({ length: 24 }, (_, i) => ({
+function QualityView({ data }: { data: ApiQuality | null }) {
+  const fallbackSamples = Array.from({ length: 24 }, (_, i) => ({
     sample: i + 1,
     mean: Number(
       (50 + Math.sin(i * 0.8) * 0.09 + (i === 18 ? 0.18 : 0)).toFixed(3),
     ),
     range: Number((0.19 + Math.abs(Math.cos(i * 0.6)) * 0.14).toFixed(3)),
   }));
-  const defects = [
+  const fallbackDefects = [
     { name: "Bore diameter", count: 84 },
     { name: "Surface finish", count: 61 },
     { name: "Runout", count: 45 },
@@ -1906,37 +1961,44 @@ function QualityView() {
     { name: "Thread damage", count: 22 },
     { name: "Burr", count: 17 },
   ];
+  const samples = data?.control_chart ?? fallbackSamples;
   let cumulative = 0;
-  const total = defects.reduce((s, d) => s + d.count, 0);
-  const pareto = defects.map((d) => ({
-    ...d,
-    cumulative: Math.round(((cumulative += d.count) / total) * 100),
-  }));
+  const total = fallbackDefects.reduce((s, d) => s + d.count, 0);
+  const pareto = data
+    ? data.pareto.map((row) => ({
+        name: row.category,
+        count: row.count,
+        cumulative: row.cumulative_percent,
+      }))
+    : fallbackDefects.map((d) => ({
+        ...d,
+        cumulative: Math.round(((cumulative += d.count) / total) * 100),
+      }));
   return (
     <>
       <section className="metric-grid compact">
         <MetricCard
           code="FPY"
           label="First-pass yield"
-          value="97.8%"
-          delta="▲ 0.6%"
+          value={`${(100 - (data?.rejection_rate ?? 2.2)).toFixed(1)}%`}
+          delta={data ? "PostgreSQL inspections" : "Portable demo"}
         />
         <MetricCard
           code="SCRAP"
           label="Scrap rate"
-          value="1.42%"
-          delta="▼ 0.18%"
+          value={`${(data?.rejection_rate ?? 1.42).toFixed(2)}%`}
+          delta={data ? "Cloud rejection rate" : "Portable demo"}
         />
         <MetricCard
           code="CP"
           label="Process capability Cp"
-          value="1.47"
+          value={(data?.cp ?? 1.47).toFixed(2)}
           delta="Capable"
         />
         <MetricCard
           code="CPK"
           label="Process capability Cpk"
-          value="1.31"
+          value={(data?.cpk ?? 1.31).toFixed(2)}
           delta="Watch centering"
           tone="neutral"
         />
@@ -1964,14 +2026,18 @@ function QualityView() {
                 />
                 <Tooltip />
                 <ReferenceLine
-                  y={50.24}
+                  y={data?.ucl_xbar ?? 50.24}
                   stroke="#dc6d54"
                   strokeDasharray="4 4"
                   label={{ value: "UCL", position: "right", fontSize: 9 }}
                 />
-                <ReferenceLine y={50} stroke="#7f9799" strokeDasharray="3 4" />
                 <ReferenceLine
-                  y={49.76}
+                  y={data?.xbar ?? 50}
+                  stroke="#7f9799"
+                  strokeDasharray="3 4"
+                />
+                <ReferenceLine
+                  y={data?.lcl_xbar ?? 49.76}
                   stroke="#dc6d54"
                   strokeDasharray="4 4"
                   label={{ value: "LCL", position: "right", fontSize: 9 }}
@@ -2029,18 +2095,19 @@ function QualityView() {
             <span className="insight-icon">
               <Activity size={18} />
             </span>
-            <b>Process stable, centering needs attention</b>
+            <b>Cloud SPC interpretation</b>
             <p>
-              One sample approaches the upper control limit. The calculated Cpk
-              is below Cp, indicating modeled off-centering rather than
-              excessive spread.
+              {data?.interpretation ??
+                "One sample approaches the upper control limit. The calculated Cpk is below Cp, indicating modeled off-centering rather than excessive spread."}
             </p>
           </div>
           <div>
             <span className="insight-icon">
               <AlertTriangle size={18} />
             </span>
-            <b>Bore diameter drives 32% of defects</b>
+            <b>
+              {pareto[0].name} drives {pareto[0].cumulative}% of defects
+            </b>
             <p>
               Prioritize tool-offset verification on CNC-04 and VMC-02. This is
               an association in synthetic data, not proven causation.
@@ -3242,6 +3309,10 @@ export default function PlantPilotApp() {
   const [notifications, setNotifications] = useState(3);
   const [toast, setToast] = useState("");
   const [dashboard, setDashboard] = useState<ApiDashboard | null>(null);
+  const [inventoryData, setInventoryData] = useState<ApiInventory | null>(null);
+  const [maintenanceData, setMaintenanceData] =
+    useState<ApiMaintenance | null>(null);
+  const [qualityData, setQualityData] = useState<ApiQuality | null>(null);
   const [apiState, setApiState] = useState<ApiState>("connecting");
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [cloudError, setCloudError] = useState("");
@@ -3259,14 +3330,26 @@ export default function PlantPilotApp() {
           "admin@plantpilot.local",
           "PlantPilot@2026",
         );
-        const [dashboardResponse, orderResponse] = await Promise.all([
+        const [
+          dashboardResponse,
+          orderResponse,
+          inventoryResponse,
+          maintenanceResponse,
+          qualityResponse,
+        ] = await Promise.all([
           getDashboard(),
           getOrders(),
+          getInventory(),
+          getMaintenance(),
+          getQuality(),
         ]);
         if (!active) return;
         setToken(session.access_token);
         setDashboard(dashboardResponse);
         setOrders(orderResponse.items.map(mapApiOrder));
+        setInventoryData(inventoryResponse);
+        setMaintenanceData(maintenanceResponse);
+        setQualityData(qualityResponse);
         setApiState("connected");
         setCloudError("");
       } catch (error) {
@@ -3297,6 +3380,9 @@ export default function PlantPilotApp() {
   const reset = () => {
     setOrders(demoOrders);
     setDashboard(null);
+    setInventoryData(null);
+    setMaintenanceData(null);
+    setQualityData(null);
     setApiState("demo");
     setCloudError("Portable browser demo selected; cloud data was not changed");
     notify("Portable browser demo restored; PostgreSQL was not changed");
@@ -3392,13 +3478,13 @@ export default function PlantPilotApp() {
       content = <MachinesView />;
       break;
     case "inventory":
-      content = <InventoryView />;
+      content = <InventoryView data={inventoryData} />;
       break;
     case "maintenance":
-      content = <MaintenanceView />;
+      content = <MaintenanceView data={maintenanceData} />;
       break;
     case "quality":
-      content = <QualityView />;
+      content = <QualityView data={qualityData} />;
       break;
     case "cost":
       content = <CostView />;
