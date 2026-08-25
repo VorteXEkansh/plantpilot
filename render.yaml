@@ -1,0 +1,39 @@
+databases:
+  - name: plantpilot-db
+    databaseName: plantpilot
+    user: plantpilot
+    plan: free
+    region: singapore
+    postgresMajorVersion: "17"
+    ipAllowList: []
+
+services:
+  - type: web
+    name: plantpilot-api
+    runtime: python
+    plan: free
+    region: singapore
+    branch: main
+    rootDir: apps/api
+    buildCommand: pip install -r requirements.txt
+    startCommand: ./scripts/start.sh
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: plantpilot-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: https://planpilot-factory.vortexblaster.chatgpt.site,http://localhost:3000
+      - key: ENVIRONMENT
+        value: production
+      - key: SYNTHETIC_SEED
+        value: "20260819"
+    buildFilter:
+      paths:
+        - apps/api/**
+        - render.yaml

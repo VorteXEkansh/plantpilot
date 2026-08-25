@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
+from threading import Lock
+from time import monotonic
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
@@ -38,6 +42,29 @@ app = FastAPI(
 app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 Db = Annotated[Session, Depends(get_db)]
+logger = logging.getLogger("plantpilot.api")
+_operation_windows: defaultdict[tuple[int, str], deque[float]] = defaultdict(deque)
+_operation_windows_lock = Lock()
+
+
+def enforce_expensive_operation_limit(user: User, operation: str) -> None:
+    """Protect public demo compute without impeding normal portfolio use."""
+    now = monotonic()
+    window_seconds = 60
+    limit = 8
+    key = (user.id, operation)
+    with _operation_windows_lock:
+        window = _operation_windows[key]
+        while window and now - window[0] >= window_seconds:
+            window.popleft()
+        if len(window) >= limit:
+            retry_after = max(1, int(window_seconds - (now - window[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="Too many compute-intensive requests; retry shortly",
+                headers={"Retry-After": str(retry_after)},
+            )
+        window.append(now)
 
 
 def current_user(authorization: Annotated[str | None, Header()] = None, db: Session = Depends(get_db)) -> User:
@@ -52,6 +79,11 @@ def current_user(authorization: Annotated[str | None, Header()] = None, db: Sess
 
 def order_dict(order: CustomerOrder) -> dict:
     return {"id": order.id, "order_code": order.order_code, "customer": order.customer, "product_id": order.product_id, "product": order.product.name, "sku": order.product.sku, "quantity": order.quantity, "order_date": order.order_date, "due_date": order.due_date, "promised_date": order.promised_date, "priority": order.priority, "status": order.status.value, "progress": order.progress, "estimated_completion": order.estimated_completion, "lateness_risk": round(order.lateness_risk * 100, 1), "production_requirements": order.product.routing, "material_requirements": order.product.bom}
+
+
+@app.get("/", tags=["System"])
+def root() -> dict:
+    return {"name": "PlantPilot API", "status": "online", "version": "1.0.0"}
 
 
 @app.get("/health", tags=["System"])
@@ -169,8 +201,17 @@ def suppliers(db: Db) -> list[dict]:
 
 @app.post("/api/v1/scheduling/run", tags=["Scheduling"])
 def scheduling(payload: ScheduleRequest, db: Db, user: User = Depends(current_user)) -> dict:
+    enforce_expensive_operation_limit(user, "schedule")
     try:
         result = optimize_schedule(db, payload.order_ids, payload.weights, payload.time_limit_seconds)
+        logger.info(
+            "CP-SAT schedule completed status=%s orders=%s operations=%s solve_seconds=%s objective=%s",
+            result["status"],
+            result["orders_scheduled"],
+            result["operations_scheduled"],
+            result["solve_seconds"],
+            result["objective_value"],
+        )
         db.add(AuditLog(user_id=user.id, action="schedule.run", entity_type="ScheduleRun", entity_id=str(result["run_id"]), detail={"orders": result["orders_scheduled"], "objective": result["objective_value"]}))
         db.commit()
         return result
@@ -208,8 +249,16 @@ def quality(db: Db) -> dict:
 
 @app.post("/api/v1/scenarios", status_code=201, tags=["Scenario Lab"])
 def scenario(payload: ScenarioRequest, db: Db, user: User = Depends(current_user)) -> dict:
+    enforce_expensive_operation_limit(user, "scenario")
     try:
         result = run_scenario(db, payload.name, payload.event_type, payload.resource_code, payload.magnitude, payload.duration_hours)
+        logger.info(
+            "SimPy scenario completed id=%s event_type=%s resource=%s duration_hours=%s",
+            result["id"],
+            payload.event_type,
+            payload.resource_code,
+            payload.duration_hours,
+        )
         db.add(AuditLog(user_id=user.id, action="scenario.run", entity_type="Scenario", entity_id=str(result["id"]), detail={"event_type": payload.event_type}))
         db.commit()
         return result

@@ -1,8 +1,23 @@
 from datetime import datetime, timedelta, timezone
 
 
+def test_system_endpoints(client):
+    root = client.get("/")
+    assert root.status_code == 200
+    assert root.json()["status"] == "online"
+
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["database"] == "connected"
+
+
 def test_login_rejects_invalid_password(client):
     response = client.post("/api/v1/auth/login", json={"email": "admin@plantpilot.local", "password": "wrong-password"})
+    assert response.status_code == 401
+
+
+def test_protected_compute_rejects_anonymous_requests(client):
+    response = client.post("/api/v1/scheduling/run", json={"time_limit_seconds": 1})
     assert response.status_code == 401
 
 
