@@ -19,7 +19,6 @@ services:
     startCommand: ./scripts/start.sh
     healthCheckPath: /health
     autoDeployTrigger: checksPass
-    maxShutdownDelaySeconds: 60
     envVars:
       - key: DATABASE_URL
         fromDatabase:
