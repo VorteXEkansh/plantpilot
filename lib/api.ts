@@ -111,7 +111,10 @@ async function request<T>(
   timeoutMs = 60_000,
 ): Promise<T> {
   let lastError: unknown;
-  const maxAttempts = 5;
+  const localApi = /^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(
+    API_BASE_URL,
+  );
+  const maxAttempts = localApi ? 1 : 5;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
