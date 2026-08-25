@@ -5,9 +5,27 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
 import httpx
+
+
+RETRYABLE_RENDER_STATUSES = {404, 502, 503, 504}
+
+
+def request(client: httpx.Client, method: str, path: str, **kwargs: object) -> httpx.Response:
+    """Retry transient Render edge routing misses during startup/route propagation."""
+    response: httpx.Response | None = None
+    for attempt in range(6):
+        response = client.request(method, path, **kwargs)
+        if response.status_code not in RETRYABLE_RENDER_STATUSES:
+            return response
+        if attempt < 5:
+            response.close()
+            time.sleep(min(2**attempt, 8))
+    assert response is not None
+    return response
 
 
 def required_environment(name: str) -> str:
@@ -25,27 +43,39 @@ def main() -> int:
 
     results: dict[str, object] = {"api_url": base_url, "checked_at": datetime.now(timezone.utc).isoformat()}
     with httpx.Client(base_url=base_url, timeout=120, follow_redirects=True) as client:
-        root = client.get("/")
+        root = request(client, "GET", "/")
         root.raise_for_status()
         results["root"] = root.json()
 
-        health = client.get("/health")
+        health = request(client, "GET", "/health")
         health.raise_for_status()
         results["health"] = health.json()
 
-        docs = client.get("/docs")
+        docs = request(client, "GET", "/docs")
         docs.raise_for_status()
         results["docs"] = docs.status_code
 
-        invalid = client.post("/api/v1/auth/login", json={"email": email, "password": f"{password}-invalid"})
+        invalid = request(
+            client,
+            "POST",
+            "/api/v1/auth/login",
+            json={"email": email, "password": f"{password}-invalid"},
+        )
         if invalid.status_code != 401:
             raise RuntimeError(f"Invalid login returned {invalid.status_code}, expected 401")
 
-        anonymous = client.post("/api/v1/scheduling/run", json={"time_limit_seconds": 1})
+        anonymous = request(
+            client, "POST", "/api/v1/scheduling/run", json={"time_limit_seconds": 1}
+        )
         if anonymous.status_code != 401:
             raise RuntimeError(f"Anonymous scheduler returned {anonymous.status_code}, expected 401")
 
-        login = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+        login = request(
+            client,
+            "POST",
+            "/api/v1/auth/login",
+            json={"email": email, "password": password},
+        )
         login.raise_for_status()
         token = login.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
@@ -59,7 +89,7 @@ def main() -> int:
             "quality": "/api/v1/quality",
             "reports": "/api/v1/reports/executive",
         }.items():
-            response = client.get(path)
+            response = request(client, "GET", path)
             response.raise_for_status()
             payload = response.json()
             results[label] = {
@@ -67,7 +97,9 @@ def main() -> int:
                 "records": len(payload.get("items", [])) if isinstance(payload, dict) else len(payload),
             }
 
-        schedule = client.post(
+        schedule = request(
+            client,
+            "POST",
             "/api/v1/scheduling/run",
             headers=headers,
             json={
@@ -92,7 +124,9 @@ def main() -> int:
             )
         }
 
-        scenario = client.post(
+        scenario = request(
+            client,
+            "POST",
             "/api/v1/scenarios",
             headers=headers,
             json={
@@ -111,7 +145,7 @@ def main() -> int:
         }
 
         if expected_scenario_id:
-            scenarios = client.get("/api/v1/scenarios")
+            scenarios = request(client, "GET", "/api/v1/scenarios")
             scenarios.raise_for_status()
             persisted_ids = {str(item["id"]) for item in scenarios.json()}
             if expected_scenario_id not in persisted_ids:

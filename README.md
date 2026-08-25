@@ -8,6 +8,15 @@ PlantPilot is a production-shaped digital manufacturing platform combining finit
 
 > PlantPilot operates on a realistic synthetic automotive-component manufacturing dataset designed for experimentation, optimization and educational demonstration. No metrics are claimed to originate from a real company or production facility.
 
+## Live production deployment
+
+- PlantPilot frontend: <https://planpilot-factory.vortexblaster.chatgpt.site>
+- Render API: <https://plantpilot-api.onrender.com>
+- API health: <https://plantpilot-api.onrender.com/health>
+- OpenAPI docs: <https://plantpilot-api.onrender.com/docs>
+
+The existing Sites deployment is owner-only. Its production browser bundle uses the Render API above; Render connects privately to `plantpilot-db` PostgreSQL in Singapore. The hosted path is independent of the developer laptop. Free Render services can cold-start, and the free PostgreSQL instance expires on **2026-09-24** unless upgraded or replaced.
+
 ## The factory
 
 The demonstration environment represents **ApexMotion Components Pvt. Ltd.**, a fictional automotive-component manufacturer in Manesar, Haryana, India. The deterministic seed contains:
@@ -68,8 +77,8 @@ The browser application also contains a deterministic offline demonstration data
 Prerequisite: Docker Desktop is running.
 
 ```bash
-git clone https://github.com/VorteXEkansh/planpilot.git
-cd planpilot
+git clone https://github.com/VorteXEkansh/plantpilot.git
+cd plantpilot
 cp .env.example .env
 docker compose up --build
 ```
@@ -125,7 +134,7 @@ CI runs migrations, data initialization, backend tests, type checking, linting, 
 
 ## Demonstration story
 
-The flagship scenario removes CNC-04 for 12 hours. An actual deterministic backend run across 32 active orders changed modeled OTD from **62.5% disrupted** to **71.9% recommended**, reduced average lateness by **2.4 hours**, released **13 modeled WIP units**, reduced modeled cost by **₹5,435**, and required **5.5 additional targeted overtime hours**. These are simulation results in the PlantPilot synthetic factory, not realized savings.
+The flagship scenario removes CNC-04 for 12 hours. The production cloud test across 32 active orders changed modeled OTD from **62.5% disrupted** to **65.6% recommended**, reduced average lateness from **14.5 to 12.2 hours**, released **11 modeled WIP units**, reduced modeled cost by **₹6,187**, and required **1.8 additional targeted overtime hours**. The unchanged baseline OTD was **71.9%**. These are simulation results in the PlantPilot synthetic factory, not realized savings.
 
 Use the [case study](docs/CASE_STUDY.md) and [interview guide](docs/INTERVIEW_GUIDE.md) for a defensible walkthrough.
 

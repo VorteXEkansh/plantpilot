@@ -111,7 +111,8 @@ async function request<T>(
   timeoutMs = 60_000,
 ): Promise<T> {
   let lastError: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const maxAttempts = 5;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -131,9 +132,14 @@ async function request<T>(
         const error = new Error(
           payload?.detail || `PlantPilot API returned ${response.status}`,
         );
-        if (attempt === 0 && [502, 503, 504].includes(response.status)) {
+        if (
+          attempt < maxAttempts - 1 &&
+          [404, 502, 503, 504].includes(response.status)
+        ) {
           lastError = error;
-          await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, 1_500 * (attempt + 1)),
+          );
           continue;
         }
         throw error;
@@ -144,8 +150,10 @@ async function request<T>(
       const retryable =
         error instanceof TypeError ||
         (error instanceof DOMException && error.name === "AbortError");
-      if (attempt === 0 && retryable) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+      if (attempt < maxAttempts - 1 && retryable) {
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, 1_500 * (attempt + 1)),
+        );
         continue;
       }
       throw error;
