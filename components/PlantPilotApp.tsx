@@ -334,8 +334,8 @@ function DataSourceNote({ apiState = "demo" }: { apiState?: ApiState }) {
       {apiState === "connected"
         ? "live FastAPI/PostgreSQL connection"
         : apiState === "connecting"
-          ? "connecting to the local API"
-          : "portable demo fallback"}
+          ? "connecting to the PlantPilot cloud API"
+          : "clearly labelled portable demo fallback"}
       .
     </p>
   );
@@ -2925,12 +2925,12 @@ function SettingsView({ reset }: { reset: () => void }) {
           <div>
             <b>Reset Demo Factory</b>
             <p>
-              Restore deterministic seed 20260819, 420 orders, 15 machines, 60
-              workers, and all historical records.
+              Restore only the portable browser dataset. This control never
+              resets or deletes cloud PostgreSQL data.
             </p>
           </div>
           <button className="danger-button" onClick={reset}>
-            Reset demo data
+            Reset browser demo
           </button>
         </div>
       </Panel>
@@ -3243,6 +3243,8 @@ export default function PlantPilotApp() {
   const [toast, setToast] = useState("");
   const [dashboard, setDashboard] = useState<ApiDashboard | null>(null);
   const [apiState, setApiState] = useState<ApiState>("connecting");
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const [cloudError, setCloudError] = useState("");
   const [token, setToken] = useState("");
   const hydrated = useSyncExternalStore(
     () => () => undefined,
@@ -3266,15 +3268,23 @@ export default function PlantPilotApp() {
         setDashboard(dashboardResponse);
         setOrders(orderResponse.items.map(mapApiOrder));
         setApiState("connected");
-      } catch {
-        if (active) setApiState("demo");
+        setCloudError("");
+      } catch (error) {
+        if (active) {
+          setApiState("demo");
+          setCloudError(
+            error instanceof Error
+              ? error.message
+              : "The PlantPilot cloud API could not be reached",
+          );
+        }
       }
     }
     void connectToFactory();
     return () => {
       active = false;
     };
-  }, []);
+  }, [connectionAttempt]);
   const navigate = (next: View) => {
     setView(next);
     setMobileOpen(false);
@@ -3288,7 +3298,8 @@ export default function PlantPilotApp() {
     setOrders(demoOrders);
     setDashboard(null);
     setApiState("demo");
-    notify("Demo factory restored to deterministic seed 20260819");
+    setCloudError("Portable browser demo selected; cloud data was not changed");
+    notify("Portable browser demo restored; PostgreSQL was not changed");
   };
   const authenticate = async (email: string, password: string) => {
     try {
@@ -3520,6 +3531,29 @@ export default function PlantPilotApp() {
             </div>
           </div>
         </header>
+        {apiState === "demo" && (
+          <div className="cloud-status-alert" role="alert">
+            <AlertTriangle size={17} />
+            <div>
+              <b>PlantPilot&apos;s cloud operations service is temporarily unavailable.</b>
+              <span>
+                Showing the labelled portable demo dataset. Cloud writes,
+                scheduling, and Scenario Lab persistence are unavailable.
+                {cloudError ? ` ${cloudError}` : ""}
+              </span>
+            </div>
+            <button
+              className="secondary"
+              onClick={() => {
+                setApiState("connecting");
+                setCloudError("");
+                setConnectionAttempt((attempt) => attempt + 1);
+              }}
+            >
+              <RefreshCcw size={14} /> Retry cloud connection
+            </button>
+          </div>
+        )}
         <div className="content">{content}</div>
         <footer>
           <span>PlantPilot v1.0.1 · ApexMotion synthetic factory</span>

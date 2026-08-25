@@ -108,32 +108,54 @@ export type ApiScenarioResult = {
 async function request<T>(
   path: string,
   init: RequestInit = {},
-  timeoutMs = 6_000,
+  timeoutMs = 60_000,
 ): Promise<T> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        Accept: "application/json",
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...init.headers,
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as {
-        detail?: string;
-      } | null;
-      throw new Error(
-        payload?.detail || `PlantPilot API returned ${response.status}`,
-      );
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        ...init,
+        headers: {
+          Accept: "application/json",
+          ...(init.body ? { "Content-Type": "application/json" } : {}),
+          ...init.headers,
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          detail?: string;
+        } | null;
+        const error = new Error(
+          payload?.detail || `PlantPilot API returned ${response.status}`,
+        );
+        if (attempt === 0 && [502, 503, 504].includes(response.status)) {
+          lastError = error;
+          await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+          continue;
+        }
+        throw error;
+      }
+      return (await response.json()) as T;
+    } catch (error) {
+      lastError = error;
+      const retryable =
+        error instanceof TypeError ||
+        (error instanceof DOMException && error.name === "AbortError");
+      if (attempt === 0 && retryable) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+        continue;
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
     }
-    return (await response.json()) as T;
-  } finally {
-    window.clearTimeout(timeout);
   }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("PlantPilot cloud API is unavailable");
 }
 
 function bearer(token: string): HeadersInit {

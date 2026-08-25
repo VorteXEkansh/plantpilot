@@ -1,0 +1,51 @@
+.cloud-status-alert {
+  max-width: 1500px;
+  margin: -9px auto 15px;
+  padding: 12px 14px;
+  border: 1px solid #edcfc6;
+  border-radius: 9px;
+  background: #fff5f1;
+  color: #a54e3a;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.cloud-status-alert > div {
+  flex: 1;
+}
+
+.cloud-status-alert b,
+.cloud-status-alert span {
+  display: block;
+}
+
+.cloud-status-alert b {
+  font-size: 9px;
+}
+
+.cloud-status-alert span {
+  color: #80635c;
+  font-size: 8px;
+  line-height: 1.5;
+  margin-top: 3px;
+}
+
+.cloud-status-alert .secondary {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 700px) {
+  .cloud-status-alert {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .cloud-status-alert > div {
+    min-width: calc(100% - 32px);
+  }
+
+  .cloud-status-alert .secondary {
+    margin-left: 28px;
+  }
+}
