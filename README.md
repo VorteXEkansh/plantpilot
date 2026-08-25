@@ -16,7 +16,7 @@ PlantPilot is a production-shaped digital manufacturing platform combining finit
 - OpenAPI docs: <https://plantpilot-api.onrender.com/docs>
 - GitHub repository: <https://github.com/VorteXEkansh/plantpilot>
 
-The existing Sites deployment is public and can be opened without a ChatGPT sign-in. Its production browser bundle uses the Render API above; Render connects privately to `plantpilot-db` PostgreSQL in Singapore. The hosted path is independent of the developer laptop. Free Render services can cold-start, and the free PostgreSQL instance expires on **2026-09-24** unless upgraded or replaced.
+The existing Sites deployment is public and can be opened without a ChatGPT sign-in. Its production browser bundle uses the Render API above, and the Render API connects over TLS to a free Neon PostgreSQL database. The hosted path is independent of the developer laptop. Neon is the production system of record and has no fixed 30-day database expiration; free Render and Neon compute can cold-start after idle periods. The previous `plantpilot-db` Render PostgreSQL instance is retained temporarily, unchanged, as a rollback source and is not in the production request path.
 
 ## The factory
 
@@ -51,15 +51,17 @@ Synthetic relationships are intentional: heavy utilization increases queue press
 ## Architecture
 
 ```text
-React 19 + TypeScript + vinext UI
+React 19 + TypeScript + vinext UI (Sites)
               │
               ▼
-FastAPI REST API ─────────────── PostgreSQL / SQLite
+FastAPI REST API (Render) ────── Neon PostgreSQL
        │                                │
        ├── OR-Tools CP-SAT              ├── normalized master data
        ├── SimPy simulation             ├── 180-day event history
        ├── scikit-learn                  └── schedule/scenario/audit state
        └── KPI, MRP, SPC, cost services
+
+Local development can use PostgreSQL or SQLite without changing the production topology.
 ```
 
 The browser application also contains a deterministic offline demonstration dataset so a portfolio preview remains navigable. In connected production, the command-center KPIs and trends, all 420 orders, inventory/MRP, maintenance intelligence, quality/SPC, authenticated order writes, CP-SAT Gantt results, and Scenario Lab comparisons are loaded from FastAPI/PostgreSQL. See [Architecture](docs/ARCHITECTURE.md), [Optimization](docs/OPTIMIZATION.md), and [Simulation](docs/SIMULATION.md).
@@ -135,7 +137,7 @@ CI runs migrations, data initialization, backend tests, type checking, linting, 
 
 ## Demonstration story
 
-The flagship scenario removes CNC-04 for 12 hours. The production cloud test across 32 active orders changed modeled OTD from **62.5% disrupted** to **65.6% recommended**, reduced average lateness from **14.5 to 12.2 hours**, released **11 modeled WIP units**, reduced modeled cost by **₹6,187**, and required **1.8 additional targeted overtime hours**. The unchanged baseline OTD was **71.9%**. These are simulation results in the PlantPilot synthetic factory, not realized savings.
+The flagship scenario removes CNC-04 for 12 hours. The Neon-backed production cloud test across 32 active orders changed modeled OTD from **62.5% disrupted** to **68.8% recommended**, reduced average lateness from **14.2 to 12.1 hours**, released **9 modeled WIP units**, and reduced modeled cost by **₹4,005**. The unchanged baseline OTD was **71.9%**. These are simulation results in the PlantPilot synthetic factory, not realized savings.
 
 Use the [case study](docs/CASE_STUDY.md) and [interview guide](docs/INTERVIEW_GUIDE.md) for a defensible walkthrough.
 
